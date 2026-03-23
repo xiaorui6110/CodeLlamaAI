@@ -6,7 +6,7 @@ plugins {
 }
 
 group = "com.xiaorui"
-version = "1.0-SNAPSHOT"
+version = "1.0.0-SNAPSHOT"
 
 repositories {
     mavenCentral()
@@ -15,6 +15,9 @@ repositories {
     }
 }
 
+// Version management
+val langchain4jVersion = "1.12.2"
+val junit4Version = "4.13.2"
 // Read more: https://plugins.jetbrains.com/docs/intellij/tools-intellij-platform-gradle-plugin.html
 dependencies {
     intellijPlatform {
@@ -23,10 +26,15 @@ dependencies {
 
         // Add plugin dependencies for compilation here:
 
-        composeUI()
-
         bundledPlugin("com.intellij.java")
     }
+
+    implementation("dev.langchain4j:langchain4j:$langchain4jVersion")
+    implementation("dev.langchain4j:langchain4j-core:$langchain4jVersion")
+    implementation("dev.langchain4j:langchain4j-ollama:$langchain4jVersion")
+    implementation("com.fasterxml.jackson.core:jackson-databind:2.18.3")
+    testImplementation("junit:junit:$junit4Version")
+
 }
 
 intellijPlatform {

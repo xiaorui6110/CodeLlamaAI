@@ -1,117 +1,92 @@
-# IntelliJ Platform Plugin Template
+# CodeLlamaAI
 
-[![Twitter Follow](https://img.shields.io/badge/follow-%40JBPlatform-1DA1F2?logo=twitter)](https://twitter.com/JBPlatform)
-[![Developers Forum](https://img.shields.io/badge/JetBrains%20Platform-Join-blue)][jb:forum]
+CodeLlamaAI 是一个基于 IntelliJ IDEA 插件的本地 AI 编程助手项目，目标是接入本地 Ollama 模型，在 IDE 内提供代码问答与辅助能力。
 
-## Plugin template structure
+当前项目还处于基础架构建设阶段，已经具备最小可扩展骨架，包括插件入口、Tool Window、配置持久化、Ollama 模型列表读取和基础对话链路。
 
-A generated project contains the following content structure:
+## 当前能力
 
-```
-.
-├── .run/                   Predefined Run/Debug Configurations
-├── build/                  Output build directory
-├── gradle
-│   ├── wrapper/            Gradle Wrapper
-├── src                     Plugin sources
-│   ├── main
-│   │   ├── kotlin/         Kotlin production sources
-│   │   └── resources/      Resources - plugin.xml, icons, messages
-├── .gitignore              Git ignoring rules
-├── build.gradle.kts        Gradle build configuration
-├── gradle.properties       Gradle configuration properties
-├── gradlew                 *nix Gradle Wrapper script
-├── gradlew.bat             Windows Gradle Wrapper script
-├── README.md               README
-└── settings.gradle.kts     Gradle project settings
+- 在 IDEA 中注册 `CodeLlamaAI` 工具窗口
+- 配置本地 Ollama 地址
+- 读取本地已安装模型列表
+- 选择模型并发送简单对话请求
+- 保存基础配置，例如 `baseUrl`、模型名、系统提示词
+
+## 项目结构
+
+```text
+src/main/java/com/xiaorui/codellamaai
+├── chat         # 项目级聊天编排
+├── ollama       # Ollama 接入与模型查询
+├── settings     # 插件持久化配置
+├── toolwindow   # IDEA 工具窗口 UI
+└── CodeLlamaAiStartup.java
 ```
 
-In addition to the configuration files, the most crucial part is the `src` directory, which contains our implementation
-and the manifest for our plugin – [plugin.xml][file:plugin.xml].
+补充架构说明见 [docs/architecture.md](docs/architecture.md)。
 
-> [!NOTE]
-> To use Java in your plugin, create the `/src/main/java` directory.
+## 开发环境
 
-## Plugin configuration file
+- JDK 21
+- IntelliJ IDEA 2025.2.x
+- Gradle Wrapper
+- 本地 Ollama 服务
 
-The plugin configuration file is a [plugin.xml][file:plugin.xml] file located in the `src/main/resources/META-INF`
-directory.
-It provides general information about the plugin, its dependencies, extensions, and listeners.
+默认 Ollama 地址：
 
-You can read more about this file in the [Plugin Configuration File][docs:plugin.xml] section of our documentation.
+```text
+http://localhost:11434
+```
 
-If you're still not quite sure what this is all about, read our
-introduction: [What is the IntelliJ Platform?][docs:intro]
+## 本地开发
 
-$H$H Predefined Run/Debug configurations
+编译：
 
-Within the default project structure, there is a `.run` directory provided containing predefined *Run/Debug
-configurations* that expose corresponding Gradle tasks:
+```powershell
+$env:GRADLE_USER_HOME="$PWD\.gradle-home"
+.\gradlew.bat compileJava testClasses
+```
 
-| Configuration name | Description                                                                                                                                                                         |
-|--------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| Run Plugin         | Runs [`:runIde`][gh:intellij-platform-gradle-plugin-runIde] IntelliJ Platform Gradle Plugin task. Use the *Debug* icon for plugin debugging.                                        |
-| Run Tests          | Runs [`:test`][gradle:lifecycle-tasks] Gradle task.                                                                                                                                 |
-| Run Verifications  | Runs [`:verifyPlugin`][gh:intellij-platform-gradle-plugin-verifyPlugin] IntelliJ Platform Gradle Plugin task to check the plugin compatibility against the specified IntelliJ IDEs. |
+启动插件调试实例：
 
-> [!NOTE]
-> You can find the logs from the running task in the `idea.log` tab.
+```powershell
+$env:GRADLE_USER_HOME="$PWD\.gradle-home"
+.\gradlew.bat runIde
+```
 
-## Publishing the plugin
+如果本地网络较慢，首次执行时 Gradle 会下载依赖和 IntelliJ Platform 相关组件。
 
-> [!TIP]
-> Make sure to follow all guidelines listed in [Publishing a Plugin][docs:publishing] to follow all recommended and
-> required steps.
+## 测试
 
-Releasing a plugin to [JetBrains Marketplace](https://plugins.jetbrains.com) is a straightforward operation that uses
-the `publishPlugin` Gradle task provided by
-the [intellij-platform-gradle-plugin][gh:intellij-platform-gradle-plugin-docs].
+项目里目前有一个面向本地 Ollama 的基础联通性测试：
 
-You can also upload the plugin to the [JetBrains Plugin Repository](https://plugins.jetbrains.com/plugin/upload)
-manually via UI.
+```powershell
+$env:GRADLE_USER_HOME="$PWD\.gradle-home"
+.\gradlew.bat test
+```
 
-## Useful links
+测试依赖本地 Ollama 服务可访问，并且本机至少存在一个可用模型。
 
-- [IntelliJ Platform SDK Plugin SDK][docs]
-- [IntelliJ Platform Gradle Plugin Documentation][gh:intellij-platform-gradle-plugin-docs]
-- [IntelliJ Platform Explorer][jb:ipe]
-- [JetBrains Marketplace Quality Guidelines][jb:quality-guidelines]
-- [IntelliJ Platform UI Guidelines][jb:ui-guidelines]
-- [JetBrains Marketplace Paid Plugins][jb:paid-plugins]
-- [IntelliJ SDK Code Samples][gh:code-samples]
+可选环境变量：
 
-[docs]: https://plugins.jetbrains.com/docs/intellij
+- `OLLAMA_BASE_URL`
+- `OLLAMA_MODEL`
 
-[docs:intro]: https://plugins.jetbrains.com/docs/intellij/intellij-platform.html?from=IJPluginTemplate
+## 当前限制
 
-[docs:plugin.xml]: https://plugins.jetbrains.com/docs/intellij/plugin-configuration-file.html?from=IJPluginTemplate
+- 还没有正式的 Settings 页面，当前配置主要放在 Tool Window 中
+- 还不支持流式输出
+- 还没有接入编辑器上下文、选区上下文和代码操作能力
+- 还没有形成完整的命令、Action、补全、代码解释等功能
 
-[docs:publishing]: https://plugins.jetbrains.com/docs/intellij/publishing-plugin.html?from=IJPluginTemplate
+## 后续规划
 
-[file:plugin.xml]: ./src/main/resources/META-INF/plugin.xml
+- 增加正式的插件设置页
+- 支持流式聊天响应
+- 接入当前文件、选区、光标位置等 IDE 上下文
+- 设计统一的 PromptBuilder 和上下文收集器
+- 扩展为代码解释、重构建议、生成与修改辅助
 
-[gh:code-samples]: https://github.com/JetBrains/intellij-sdk-code-samples
+## 说明
 
-[gh:intellij-platform-gradle-plugin]: https://github.com/JetBrains/intellij-platform-gradle-plugin
-
-[gh:intellij-platform-gradle-plugin-docs]: https://plugins.jetbrains.com/docs/intellij/tools-intellij-platform-gradle-plugin.html
-
-[gh:intellij-platform-gradle-plugin-runIde]: https://plugins.jetbrains.com/docs/intellij/tools-intellij-platform-gradle-plugin-tasks.html#runIde
-
-[gh:intellij-platform-gradle-plugin-verifyPlugin]: https://plugins.jetbrains.com/docs/intellij/tools-intellij-platform-gradle-plugin-tasks.html#verifyPlugin
-
-[gradle:lifecycle-tasks]: https://docs.gradle.org/current/userguide/java_plugin.html#lifecycle_tasks
-
-[jb:github]: https://github.com/JetBrains/.github/blob/main/profile/README.md
-
-[jb:forum]: https://platform.jetbrains.com/
-
-[jb:quality-guidelines]: https://plugins.jetbrains.com/docs/marketplace/quality-guidelines.html
-
-[jb:paid-plugins]: https://plugins.jetbrains.com/docs/marketplace/paid-plugins-marketplace.html
-
-[jb:quality-guidelines]: https://plugins.jetbrains.com/docs/marketplace/quality-guidelines.html
-
-[jb:ipe]: https://jb.gg/ipe
-
-[jb:ui-guidelines]: https://jetbrains.github.io/ui
+这是一个持续迭代中的插件项目，README 会随着架构和功能完善逐步更新。
