@@ -11,6 +11,8 @@ import com.xiaorui.codellamaai.chat.ChatMessage;
 import com.xiaorui.codellamaai.chat.ChatRequest;
 import com.xiaorui.codellamaai.chat.ChatResult;
 import com.xiaorui.codellamaai.chat.CodeLlamaAIChatService;
+import com.xiaorui.codellamaai.chat.StreamingChatCallbacks;
+import com.xiaorui.codellamaai.chat.StreamingChatSession;
 import com.xiaorui.codellamaai.ollama.OllamaModelInfo;
 import com.xiaorui.codellamaai.settings.CodeLlamaAISettings;
 import com.xiaorui.codellamaai.settings.CodeLlamaAISettingsConfigurable;
@@ -23,6 +25,7 @@ import javax.swing.DefaultComboBoxModel;
 import javax.swing.JButton;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
+import javax.swing.JEditorPane;
 import javax.swing.JLabel;
 import javax.swing.JList;
 import javax.swing.JPanel;
@@ -52,7 +55,11 @@ public final class CodeLlamaAiToolWindowPanel {
     private final JButton settingsButton = new JButton("Settings");
     private final JButton clearButton = new JButton("Clear Chat");
     private final JButton sendButton = new JButton("Send");
+    private final JButton stopButton = new JButton("Stop");
     private final List<ChatMessage> conversation = new ArrayList<>();
+    private boolean updatingModelComboBox;
+    private JEditorPane activeStreamingPane;
+    private StreamingChatSession activeStreamingSession;
 
     public CodeLlamaAiToolWindowPanel(@NotNull Project project) {
         this.project = project;
@@ -92,6 +99,7 @@ public final class CodeLlamaAiToolWindowPanel {
         leftActions.add(refreshButton);
         leftActions.add(settingsButton);
         leftActions.add(clearButton);
+        leftActions.add(stopButton);
 
         JPanel header = new JPanel(new BorderLayout());
         header.setBorder(JBUI.Borders.emptyBottom(8));
@@ -129,7 +137,9 @@ public final class CodeLlamaAiToolWindowPanel {
         settingsButton.addActionListener(event -> openSettings());
         clearButton.addActionListener(event -> clearConversation());
         sendButton.addActionListener(event -> sendPrompt());
+        stopButton.addActionListener(event -> stopStreaming());
         modelComboBox.addActionListener(event -> saveSettings());
+        stopButton.setEnabled(false);
     }
 
     private void refreshModels() {
@@ -167,35 +177,73 @@ public final class CodeLlamaAiToolWindowPanel {
         setBusy(true, "Waiting for Ollama...");
         promptArea.setText("");
 
+        conversation.add(ChatMessage.assistant(""));
+        renderConversation();
+        activeStreamingPane = findLastAssistantPane();
+        setStreamingState(true, "Streaming response...");
+
         ChatRequest request = new ChatRequest(prompt, historyBeforeRequest);
-        chatService.sendPromptAsync(request)
-                .whenComplete((result, throwable) -> ApplicationManager.getApplication().invokeLater(() -> {
-                    if (throwable != null) {
-                        setBusy(false, "Chat failed");
-                        appendSystemMessage("Request failed: " + messageFromThrowable(throwable));
-                        return;
-                    }
-                    renderResult(result);
-                    setBusy(false, result.success() ? "Completed" : "Failed");
-                }));
+        activeStreamingSession = chatService.sendPromptStreaming(request, new StreamingChatCallbacks() {
+            @Override
+            public void onPartialResponse(@NotNull String partialText) {
+                ApplicationManager.getApplication().invokeLater(() -> updateStreamingAssistantMessage(partialText));
+            }
+
+            @Override
+            public void onComplete(@NotNull String fullText) {
+                ApplicationManager.getApplication().invokeLater(() -> {
+                    updateStreamingAssistantMessage(fullText);
+                    activeStreamingPane = null;
+                    activeStreamingSession = null;
+                    setStreamingState(false, "Completed");
+                });
+            }
+
+            @Override
+            public void onError(@NotNull String message) {
+                ApplicationManager.getApplication().invokeLater(() -> {
+                    removeTrailingEmptyAssistantMessage();
+                    activeStreamingPane = null;
+                    activeStreamingSession = null;
+                    appendSystemMessage(message);
+                    setStreamingState(false, "Failed");
+                });
+            }
+
+            @Override
+            public void onCancelled() {
+                ApplicationManager.getApplication().invokeLater(() -> {
+                    removeTrailingEmptyAssistantMessage();
+                    activeStreamingPane = null;
+                    activeStreamingSession = null;
+                    appendSystemMessage("Request cancelled.");
+                    setStreamingState(false, "Cancelled");
+                });
+            }
+        });
     }
 
     private void reloadModels(List<OllamaModelInfo> models) {
-        modelComboBox.removeAllItems();
-        for (OllamaModelInfo model : models) {
-            modelComboBox.addItem(new ModelOption(model.name(), model.size()));
-        }
+        String selectedModelName = selectedModelName();
+        updatingModelComboBox = true;
+        try {
+            modelComboBox.removeAllItems();
+            for (OllamaModelInfo model : models) {
+                modelComboBox.addItem(new ModelOption(model.name(), model.size()));
+            }
 
-        String savedModel = settings.getModelName();
-        if (!savedModel.isBlank()) {
-            selectModelByName(savedModel);
-        } else if (!models.isEmpty()) {
-            OllamaModelInfo smallestModel = models.stream()
-                    .min(Comparator.comparingLong(OllamaModelInfo::size))
-                    .orElse(models.get(0));
-            selectModelByName(smallestModel.name());
-            appendSystemMessage("Auto-selected the smallest available model: " + smallestModel.name()
-                    + " (" + formatSize(smallestModel.size()) + ").");
+            if (!selectedModelName.isBlank()) {
+                selectModelByName(selectedModelName);
+            } else if (!models.isEmpty()) {
+                OllamaModelInfo smallestModel = models.stream()
+                        .min(Comparator.comparingLong(OllamaModelInfo::size))
+                        .orElse(models.get(0));
+                selectModelByName(smallestModel.name());
+                appendSystemMessage("Auto-selected the smallest available model: " + smallestModel.name()
+                        + " (" + formatSize(smallestModel.size()) + ").");
+            }
+        } finally {
+            updatingModelComboBox = false;
         }
         saveSettings();
     }
@@ -208,6 +256,9 @@ public final class CodeLlamaAiToolWindowPanel {
     }
 
     private void saveSettings() {
+        if (updatingModelComboBox) {
+            return;
+        }
         Object selectedItem = modelComboBox.getSelectedItem();
         if (selectedItem instanceof ModelOption modelOption) {
             settings.setModelName(modelOption.name());
@@ -226,15 +277,41 @@ public final class CodeLlamaAiToolWindowPanel {
         statusLabel.setText(status);
     }
 
+    private void setStreamingState(boolean streaming, String status) {
+        refreshButton.setEnabled(!streaming);
+        settingsButton.setEnabled(!streaming);
+        clearButton.setEnabled(!streaming);
+        sendButton.setEnabled(!streaming);
+        stopButton.setEnabled(streaming);
+        modelComboBox.setEnabled(!streaming);
+        promptArea.setEditable(!streaming);
+        statusLabel.setText(status);
+    }
+
     private void openSettings() {
         ShowSettingsUtil.getInstance().showSettingsDialog(project, CodeLlamaAISettingsConfigurable.class);
         refreshModels();
     }
 
     private void clearConversation() {
+        if (activeStreamingSession != null && activeStreamingSession.isRunning()) {
+            activeStreamingSession.cancel();
+            activeStreamingSession = null;
+        }
+        activeStreamingPane = null;
         conversation.clear();
         renderConversation();
         statusLabel.setText("Conversation cleared");
+    }
+
+    private void stopStreaming() {
+        if (activeStreamingSession == null || !activeStreamingSession.isRunning()) {
+            statusLabel.setText("No active request");
+            stopButton.setEnabled(false);
+            return;
+        }
+        activeStreamingSession.cancel();
+        statusLabel.setText("Cancelling...");
     }
 
     private void renderConversation() {
@@ -256,19 +333,21 @@ public final class CodeLlamaAiToolWindowPanel {
     }
 
     private JComponent buildMessageCard(ChatMessage message) {
-        JBTextArea textArea = new JBTextArea(message.content());
-        textArea.setEditable(false);
-        textArea.setLineWrap(true);
-        textArea.setWrapStyleWord(true);
-        textArea.setBorder(JBUI.Borders.empty(8));
-        textArea.setBackground(content.getBackground());
+        JEditorPane contentPane = new JEditorPane();
+        contentPane.setContentType("text/html");
+        contentPane.setEditable(false);
+        contentPane.setOpaque(false);
+        contentPane.putClientProperty(JEditorPane.HONOR_DISPLAY_PROPERTIES, Boolean.TRUE);
+        contentPane.setBorder(JBUI.Borders.empty(8));
+        contentPane.setText(MarkdownRenderer.toHtml(message.content()));
+        contentPane.setCaretPosition(0);
 
         JPanel panel = new JPanel(new BorderLayout());
         panel.setBorder(JBUI.Borders.compound(
                 BorderFactory.createTitledBorder(titleFor(message)),
                 JBUI.Borders.emptyBottom(8)
         ));
-        panel.add(textArea, BorderLayout.CENTER);
+        panel.add(contentPane, BorderLayout.CENTER);
         panel.setAlignmentX(0.0f);
         return panel;
     }
@@ -291,6 +370,45 @@ public final class CodeLlamaAiToolWindowPanel {
         renderConversation();
     }
 
+    private void updateStreamingAssistantMessage(String text) {
+        if (activeStreamingPane != null) {
+            activeStreamingPane.setText(MarkdownRenderer.toHtml(text));
+            activeStreamingPane.setCaretPosition(0);
+            if (!conversation.isEmpty()) {
+                int lastIndex = conversation.size() - 1;
+                ChatMessage lastMessage = conversation.get(lastIndex);
+                if (lastMessage.role() == ChatMessage.Role.ASSISTANT) {
+                    conversation.set(lastIndex, ChatMessage.assistant(text));
+                }
+            }
+            return;
+        }
+        if (conversation.isEmpty()) {
+            conversation.add(ChatMessage.assistant(text));
+        } else {
+            int lastIndex = conversation.size() - 1;
+            ChatMessage lastMessage = conversation.get(lastIndex);
+            if (lastMessage.role() == ChatMessage.Role.ASSISTANT) {
+                conversation.set(lastIndex, ChatMessage.assistant(text));
+            } else {
+                conversation.add(ChatMessage.assistant(text));
+            }
+        }
+        renderConversation();
+    }
+
+    private void removeTrailingEmptyAssistantMessage() {
+        if (conversation.isEmpty()) {
+            return;
+        }
+        int lastIndex = conversation.size() - 1;
+        ChatMessage lastMessage = conversation.get(lastIndex);
+        if (lastMessage.role() == ChatMessage.Role.ASSISTANT && lastMessage.content().isBlank()) {
+            conversation.remove(lastIndex);
+            renderConversation();
+        }
+    }
+
     private String messageFromThrowable(Throwable throwable) {
         Throwable cause = throwable.getCause() == null ? throwable : throwable.getCause();
         return cause.getMessage() == null ? cause.getClass().getSimpleName() : cause.getMessage();
@@ -304,6 +422,26 @@ public final class CodeLlamaAiToolWindowPanel {
                 return;
             }
         }
+    }
+
+    private String selectedModelName() {
+        Object selectedItem = modelComboBox.getSelectedItem();
+        if (selectedItem instanceof ModelOption modelOption) {
+            return modelOption.name();
+        }
+        return settings.getModelName();
+    }
+
+    private JEditorPane findLastAssistantPane() {
+        if (conversationPanel.getComponentCount() == 0) {
+            return null;
+        }
+        Component lastComponent = conversationPanel.getComponent(conversationPanel.getComponentCount() - 1);
+        if (!(lastComponent instanceof JPanel panel)) {
+            return null;
+        }
+        Component centerComponent = ((BorderLayout) panel.getLayout()).getLayoutComponent(BorderLayout.CENTER);
+        return centerComponent instanceof JEditorPane editorPane ? editorPane : null;
     }
 
     private String formatSize(long sizeInBytes) {

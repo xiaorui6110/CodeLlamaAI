@@ -16,7 +16,10 @@ import org.jetbrains.annotations.NotNull;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * @author xiaorui
@@ -90,6 +93,51 @@ public final class CodeLlamaAIChatService {
         }, AppExecutorUtil.getAppExecutorService());
     }
 
+    public @NotNull StreamingChatSession sendPromptStreaming(
+            @NotNull ChatRequest request,
+            @NotNull StreamingChatCallbacks callbacks
+    ) {
+        StreamingSession session = new StreamingSession(callbacks);
+        CompletableFuture.runAsync(() -> {
+            try {
+                String modelName = settings.getModelName();
+                if (modelName.isBlank()) {
+                    session.fail("No Ollama model selected.");
+                    return;
+                }
+
+                EditorContextSnapshot contextSnapshot = ReadAction.compute(() -> contextCollector.collect(settings));
+                String prompt = promptBuilder.buildPrompt(request, contextSnapshot);
+                LOG.info("Prepared streaming chat request. model=" + modelName
+                        + ", project=" + project.getName()
+                        + ", historySize=" + request.conversationHistory().size()
+                        + ", hasContext=" + contextSnapshot.hasContext()
+                        + ", selectionLength=" + contextSnapshot.selectedText().length()
+                        + ", fileExcerptLength=" + contextSnapshot.fileExcerpt().length()
+                        + ", finalPromptLength=" + prompt.length());
+
+                if (session.isCancellationRequested()) {
+                    session.cancelLocally();
+                    return;
+                }
+
+                ollamaGateway.streamChat(
+                        settings.getBaseUrl(),
+                        modelName,
+                        settings.getSystemPrompt(),
+                        prompt,
+                        session
+                );
+            } catch (CancellationException ignored) {
+                session.cancelLocally();
+            } catch (Exception e) {
+                LOG.warn("Streaming chat request failed: " + e.getMessage(), e);
+                session.fail(toUserFriendlyMessage(e));
+            }
+        }, AppExecutorUtil.getAppExecutorService());
+        return session;
+    }
+
     public Project getProject() {
         return project;
     }
@@ -101,5 +149,102 @@ public final class CodeLlamaAIChatService {
                     + "Choose a smaller model or a more aggressively quantized variant.";
         }
         return message;
+    }
+
+    private final class StreamingSession implements StreamingChatSession, OllamaGateway.StreamingOllamaCallbacks {
+
+        private final StreamingChatCallbacks callbacks;
+        private final StringBuilder accumulatedText = new StringBuilder();
+        private final AtomicReference<dev.langchain4j.model.chat.response.StreamingHandle> handleRef = new AtomicReference<>();
+        private final AtomicBoolean running = new AtomicBoolean(true);
+        private final AtomicBoolean cancelled = new AtomicBoolean(false);
+
+        private StreamingSession(StreamingChatCallbacks callbacks) {
+            this.callbacks = callbacks;
+        }
+
+        @Override
+        public void cancel() {
+            if (!running.get()) {
+                return;
+            }
+            cancelled.set(true);
+            dev.langchain4j.model.chat.response.StreamingHandle handle = handleRef.get();
+            if (handle != null) {
+                handle.cancel();
+            }
+        }
+
+        @Override
+        public boolean isRunning() {
+            return running.get();
+        }
+
+        @Override
+        public void onHandleAvailable(@NotNull dev.langchain4j.model.chat.response.StreamingHandle handle) {
+            handleRef.compareAndSet(null, handle);
+            if (cancelled.get()) {
+                handle.cancel();
+            }
+        }
+
+        @Override
+        public void onPartialResponse(@NotNull String partialText) {
+            if (!running.get() || cancelled.get()) {
+                return;
+            }
+            accumulatedText.append(partialText);
+            callbacks.onPartialResponse(accumulatedText.toString());
+        }
+
+        @Override
+        public void onComplete(@NotNull String fullText) {
+            if (!running.compareAndSet(true, false)) {
+                return;
+            }
+            if (cancelled.get()) {
+                callbacks.onCancelled();
+                return;
+            }
+            String finalText = fullText.isBlank() ? accumulatedText.toString() : fullText;
+            if (finalText.isBlank()) {
+                callbacks.onError("Ollama returned an empty response. Check the model output and IDE log.");
+                return;
+            }
+            callbacks.onComplete(finalText);
+        }
+
+        @Override
+        public void onError(@NotNull Throwable error) {
+            if (!running.compareAndSet(true, false)) {
+                return;
+            }
+            if (cancelled.get()) {
+                callbacks.onCancelled();
+                return;
+            }
+            String message = error instanceof Exception exception
+                    ? toUserFriendlyMessage(exception)
+                    : (error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage());
+            callbacks.onError(message);
+        }
+
+        private boolean isCancellationRequested() {
+            return cancelled.get();
+        }
+
+        private void cancelLocally() {
+            if (!running.compareAndSet(true, false)) {
+                return;
+            }
+            callbacks.onCancelled();
+        }
+
+        private void fail(String message) {
+            if (!running.compareAndSet(true, false)) {
+                return;
+            }
+            callbacks.onError(message);
+        }
     }
 }
