@@ -11,16 +11,22 @@ final class MarkdownRenderer {
     }
 
     static @NotNull String toHtml(@NotNull String markdown) {
+        return render(markdown).html();
+    }
+
+    static @NotNull RenderedMarkdown render(@NotNull String markdown) {
         String normalized = markdown.replace("\r\n", "\n").replace('\r', '\n');
         List<String> lines = normalized.lines().toList();
 
         StringBuilder html = new StringBuilder();
-        html.append("<html><body style='font-family:Segoe UI, sans-serif; font-size:12px; line-height:1.45;'>");
+        html.append("<html><body>");
 
         boolean inCodeBlock = false;
-        boolean inList = false;
+        boolean inUnorderedList = false;
+        boolean inOrderedList = false;
         StringBuilder paragraph = new StringBuilder();
         List<String> codeLines = new ArrayList<>();
+        List<String> codeBlocks = new ArrayList<>();
 
         for (String rawLine : lines) {
             String line = rawLine == null ? "" : rawLine;
@@ -28,12 +34,17 @@ final class MarkdownRenderer {
 
             if (trimmed.startsWith("```")) {
                 flushParagraph(html, paragraph);
-                if (inList) {
+                if (inUnorderedList) {
                     html.append("</ul>");
-                    inList = false;
+                    inUnorderedList = false;
+                }
+                if (inOrderedList) {
+                    html.append("</ol>");
+                    inOrderedList = false;
                 }
                 if (inCodeBlock) {
-                    html.append("<pre style='background:#f6f8fa; border:1px solid #d0d7de; padding:8px; border-radius:6px; overflow:auto;'><code>")
+                    codeBlocks.add(String.join("\n", codeLines));
+                    html.append("<pre><code>")
                             .append(escapeHtml(String.join("\n", codeLines)))
                             .append("</code></pre>");
                     codeLines.clear();
@@ -51,26 +62,52 @@ final class MarkdownRenderer {
 
             if (trimmed.isBlank()) {
                 flushParagraph(html, paragraph);
-                if (inList) {
+                if (inUnorderedList) {
                     html.append("</ul>");
-                    inList = false;
+                    inUnorderedList = false;
+                }
+                if (inOrderedList) {
+                    html.append("</ol>");
+                    inOrderedList = false;
                 }
                 continue;
             }
 
             if (trimmed.startsWith("- ") || trimmed.startsWith("* ")) {
                 flushParagraph(html, paragraph);
-                if (!inList) {
+                if (inOrderedList) {
+                    html.append("</ol>");
+                    inOrderedList = false;
+                }
+                if (!inUnorderedList) {
                     html.append("<ul style='margin-top:4px; margin-bottom:8px;'>");
-                    inList = true;
+                    inUnorderedList = true;
                 }
                 html.append("<li>").append(renderInline(trimmed.substring(2).trim())).append("</li>");
                 continue;
             }
 
-            if (inList) {
+            if (isOrderedListItem(trimmed)) {
+                flushParagraph(html, paragraph);
+                if (inUnorderedList) {
+                    html.append("</ul>");
+                    inUnorderedList = false;
+                }
+                if (!inOrderedList) {
+                    html.append("<ol>");
+                    inOrderedList = true;
+                }
+                html.append("<li>").append(renderInline(trimmed.replaceFirst("^\\d+\\.\\s+", ""))).append("</li>");
+                continue;
+            }
+
+            if (inUnorderedList) {
                 html.append("</ul>");
-                inList = false;
+                inUnorderedList = false;
+            }
+            if (inOrderedList) {
+                html.append("</ol>");
+                inOrderedList = false;
             }
 
             if (trimmed.startsWith("### ")) {
@@ -88,6 +125,13 @@ final class MarkdownRenderer {
                 html.append("<h1 style='margin:14px 0 8px;'>").append(renderInline(trimmed.substring(2))).append("</h1>");
                 continue;
             }
+            if (trimmed.startsWith("> ")) {
+                flushParagraph(html, paragraph);
+                html.append("<blockquote>")
+                        .append(renderInline(trimmed.substring(2)))
+                        .append("</blockquote>");
+                continue;
+            }
 
             if (!paragraph.isEmpty()) {
                 paragraph.append("<br/>");
@@ -96,24 +140,28 @@ final class MarkdownRenderer {
         }
 
         flushParagraph(html, paragraph);
-        if (inList) {
+        if (inUnorderedList) {
             html.append("</ul>");
         }
+        if (inOrderedList) {
+            html.append("</ol>");
+        }
         if (inCodeBlock) {
-            html.append("<pre style='background:#f6f8fa; border:1px solid #d0d7de; padding:8px; border-radius:6px; overflow:auto;'><code>")
+            codeBlocks.add(String.join("\n", codeLines));
+            html.append("<pre><code>")
                     .append(escapeHtml(String.join("\n", codeLines)))
                     .append("</code></pre>");
         }
 
         html.append("</body></html>");
-        return html.toString();
+        return new RenderedMarkdown(html.toString(), List.copyOf(codeBlocks));
     }
 
     private static void flushParagraph(StringBuilder html, StringBuilder paragraph) {
         if (paragraph.isEmpty()) {
             return;
         }
-        html.append("<p style='margin:6px 0;'>").append(paragraph).append("</p>");
+        html.append("<p>").append(paragraph).append("</p>");
         paragraph.setLength(0);
     }
 
@@ -126,7 +174,7 @@ final class MarkdownRenderer {
             if (current == '`') {
                 rendered.append(inInlineCode
                         ? "</code>"
-                        : "<code style='background:#f6f8fa; border:1px solid #d0d7de; padding:1px 4px; border-radius:4px;'>");
+                        : "<code>");
                 inInlineCode = !inInlineCode;
                 index++;
                 continue;
@@ -148,5 +196,20 @@ final class MarkdownRenderer {
                 .replace("&", "&amp;")
                 .replace("<", "&lt;")
                 .replace(">", "&gt;");
+    }
+
+    static boolean hasCodeBlock(@NotNull String markdown) {
+        return markdown.contains("```");
+    }
+
+    static @NotNull String extractCodeBlocks(@NotNull String markdown) {
+        return String.join("\n\n", render(markdown).codeBlocks()).trim();
+    }
+
+    private static boolean isOrderedListItem(String line) {
+        return line.matches("^\\d+\\.\\s+.*");
+    }
+
+    record RenderedMarkdown(@NotNull String html, @NotNull List<String> codeBlocks) {
     }
 }
