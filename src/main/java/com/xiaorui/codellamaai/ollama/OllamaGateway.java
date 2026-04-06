@@ -4,6 +4,7 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.intellij.openapi.components.Service;
+import com.intellij.openapi.diagnostic.Logger;
 import dev.langchain4j.model.ollama.OllamaChatModel;
 import org.jetbrains.annotations.NotNull;
 
@@ -21,6 +22,8 @@ import java.util.List;
  */
 @Service(Service.Level.APP)
 public final class OllamaGateway {
+
+    private static final Logger LOG = Logger.getInstance(OllamaGateway.class);
 
     private final HttpClient httpClient = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(3))
@@ -50,6 +53,11 @@ public final class OllamaGateway {
             @NotNull String systemPrompt,
             @NotNull String userPrompt
     ) {
+        LOG.info("Sending Ollama chat request. baseUrl=" + trimTrailingSlash(baseUrl)
+                + ", model=" + modelName
+                + ", systemPromptLength=" + systemPrompt.length()
+                + ", userPromptLength=" + userPrompt.length());
+
         OllamaChatModel model = OllamaChatModel.builder()
                 .baseUrl(trimTrailingSlash(baseUrl))
                 .modelName(modelName)
@@ -60,7 +68,10 @@ public final class OllamaGateway {
         String prompt = systemPrompt.isBlank()
                 ? userPrompt
                 : "System:\n" + systemPrompt + "\n\nUser:\n" + userPrompt;
-        return model.chat(prompt);
+        String response = model.chat(prompt);
+        LOG.info("Received Ollama chat response. model=" + modelName
+                + ", responseLength=" + (response == null ? -1 : response.length()));
+        return response;
     }
 
     private String trimTrailingSlash(String baseUrl) {

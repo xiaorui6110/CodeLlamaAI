@@ -27,5 +27,10 @@
         <postStartupActivity implementation="com.xiaorui.codellamaai.CodeLlamaAiStartup"/>
         <toolWindow id="CodeLlamaAI" factoryClass="com.xiaorui.codellamaai.toolwindow.CodeLlamaAiToolWindowFactory"
                     icon="AllIcons.Toolwindows.ToolWindowPalette"/>
+        <applicationConfigurable
+                parentId="tools"
+                displayName="CodeLlamaAI"
+                id="preferences.CodeLlamaAI"
+                instance="com.xiaorui.codellamaai.settings.CodeLlamaAISettingsConfigurable"/>
     </extensions>
 </idea-plugin>

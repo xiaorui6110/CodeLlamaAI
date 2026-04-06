@@ -23,7 +23,7 @@ src/main/java/com/xiaorui/codellamaai
 └── CodeLlamaAiStartup.java
 ```
 
-补充架构说明见 [docs/architecture.md](docs/architecture.md)。
+补充架构说明见 [docs/architecture.md](docs/init-architecture.md)。
 
 ## 开发环境
 

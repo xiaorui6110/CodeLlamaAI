@@ -7,7 +7,7 @@ import com.intellij.openapi.components.State;
 import com.intellij.openapi.components.Storage;
 import com.intellij.util.xmlb.XmlSerializerUtil;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
+import org.jspecify.annotations.NonNull;
 
 /**
  * @author xiaorui
@@ -16,14 +16,18 @@ import org.jetbrains.annotations.Nullable;
 @State(name = "CodeLlamaAISettings", storages = @Storage("CodeLlamaAI.xml"))
 public final class CodeLlamaAISettings implements PersistentStateComponent<CodeLlamaAISettings.State> {
 
-    private State state = new State();
+    public static final String DEFAULT_BASE_URL = "http://localhost:11434";
+    public static final String DEFAULT_SYSTEM_PROMPT =
+            "You are CodeLlamaAI, a concise coding assistant running inside IntelliJ IDEA.";
+
+    private final State state = new State();
 
     public static CodeLlamaAISettings getInstance() {
         return ApplicationManager.getApplication().getService(CodeLlamaAISettings.class);
     }
 
     @Override
-    public @Nullable State getState() {
+    public @NonNull State getState() {
         return state;
     }
 
@@ -37,7 +41,7 @@ public final class CodeLlamaAISettings implements PersistentStateComponent<CodeL
     }
 
     public void setBaseUrl(String baseUrl) {
-        state.baseUrl = normalize(baseUrl, "http://localhost:11434");
+        state.baseUrl = normalize(baseUrl, DEFAULT_BASE_URL);
     }
 
     public String getModelName() {
@@ -56,8 +60,29 @@ public final class CodeLlamaAISettings implements PersistentStateComponent<CodeL
         state.systemPrompt = normalize(systemPrompt, DEFAULT_SYSTEM_PROMPT);
     }
 
-    public static final String DEFAULT_SYSTEM_PROMPT =
-            "You are CodeLlamaAI, a concise coding assistant running inside IntelliJ IDEA.";
+    public boolean isIncludeCurrentFile() {
+        return state.includeCurrentFile;
+    }
+
+    public void setIncludeCurrentFile(boolean includeCurrentFile) {
+        state.includeCurrentFile = includeCurrentFile;
+    }
+
+    public boolean isIncludeSelection() {
+        return state.includeSelection;
+    }
+
+    public void setIncludeSelection(boolean includeSelection) {
+        state.includeSelection = includeSelection;
+    }
+
+    public int getContextCharLimit() {
+        return state.contextCharLimit;
+    }
+
+    public void setContextCharLimit(int contextCharLimit) {
+        state.contextCharLimit = Math.max(1000, contextCharLimit);
+    }
 
     private static String normalize(String value, String defaultValue) {
         if (value == null) {
@@ -68,8 +93,11 @@ public final class CodeLlamaAISettings implements PersistentStateComponent<CodeL
     }
 
     public static final class State {
-        public String baseUrl = "http://localhost:11434";
+        public String baseUrl = DEFAULT_BASE_URL;
         public String modelName = "";
         public String systemPrompt = DEFAULT_SYSTEM_PROMPT;
+        public boolean includeCurrentFile = true;
+        public boolean includeSelection = true;
+        public int contextCharLimit = 12000;
     }
 }
